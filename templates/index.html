@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CMS NPPES NPI Registry - Live API Filtering & Complete Batch Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand-group">
+                <div class="brand-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">NPPES NPI Registry</h1>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Preset Shortcuts Banner -->
+    <div class="preset-strip">
+        <div class="preset-container">
+            <span class="preset-label">Quick Presets:</span>
+            <div class="preset-chips">
+                <button type="button" class="preset-chip" data-preset="cardiology-ny">
+                    <span class="chip-dot"></span> Cardiology in NY
+                </button>
+                <button type="button" class="preset-chip" data-preset="hospital-tx">
+                    <span class="chip-dot"></span> Hospitals in TX
+                </button>
+                <button type="button" class="preset-chip" data-preset="mayo-org">
+                    <span class="chip-dot"></span> Mayo Clinic (Org)
+                </button>
+                <button type="button" class="preset-chip" data-preset="smith-boston">
+                    <span class="chip-dot"></span> John Smith (Boston)
+                </button>
+                <button type="button" class="preset-chip" data-preset="canada-providers">
+                    <span class="chip-dot"></span> International (Canada)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application Layout -->
+    <main class="app-main">
+        <!-- Left Filter Panel -->
+        <aside class="filter-sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title-group">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                    </svg>
+                    <h2>Registry Filters</h2>
+                </div>
+                <button type="button" id="clearAllFiltersBtn" class="btn-text-danger" title="Reset all search filters">
+                    Reset
+                </button>
+            </div>
+
+            <form id="filterForm" autocomplete="off" onsubmit="return false;">
+                <!-- Section 1: Core Identifier & Type -->
+                <div class="filter-section">
+                    <div class="section-heading">1. Core Search</div>
+
+                    <!-- NPI Number -->
+                    <div class="form-group">
+                        <label for="filterNpiNumber">
+                            NPI Number
+                            <span class="label-hint">10 digits</span>
+                        </label>
+                        <div class="input-with-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="4" width="18" height="16" rx="2"/>
+                                <line x1="7" y1="8" x2="17" y2="8"/>
+                                <line x1="7" y1="12" x2="17" y2="12"/>
+                                <line x1="7" y1="16" x2="12" y2="16"/>
+                            </svg>
+                            <input type="text" id="filterNpiNumber" name="number" placeholder="e.g. 1881018208" maxlength="10" inputmode="numeric">
+                        </div>
+                    </div>
+
+                    <!-- NPI Type: Any, Individual, Organization -->
+                    <div class="form-group">
+                        <label>NPI Type</label>
+                        <div class="segmented-control" id="npiTypeGroup">
+                            <label class="segment-option">
+                                <input type="radio" name="enumeration_type" value="" checked>
+                                <span>Any</span>
+                            </label>
+                            <label class="segment-option">
+                                <input type="radio" name="enumeration_type" value="NPI-1">
+                                <span>Individual</span>
+                            </label>
+                            <label class="segment-option">
+                                <input type="radio" name="enumeration_type" value="NPI-2">
+                                <span>Organization</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Taxonomy Description -->
+                    <div class="form-group">
+                        <label for="filterTaxonomy">
+                            Taxonomy Description
+                            <span class="label-hint">Specialty</span>
+                        </label>
+                        <div class="input-with-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                            </svg>
+                            <input type="text" id="filterTaxonomy" name="taxonomy_description" placeholder="e.g. Internal Medicine, Hospital*" list="taxonomyDatalist">
+                            <datalist id="taxonomyDatalist"></datalist>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Individual Provider Filters -->
+                <div class="filter-section" id="individualSection">
+                    <div class="section-heading">2. Individual Provider</div>
+                    
+                    <div class="form-row">
+                        <div class="form-group col-half">
+                            <label for="filterFirstName">Provider First Name</label>
+                            <input type="text" id="filterFirstName" name="first_name" placeholder="First Name">
+                        </div>
+                        <div class="form-group col-half">
+                            <label for="filterLastName">Provider Last Name</label>
+                            <input type="text" id="filterLastName" name="last_name" placeholder="Last Name">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Organization Filters -->
+                <div class="filter-section" id="organizationSection">
+                    <div class="section-heading">3. Organization Details</div>
+
+                    <div class="form-group">
+                        <label for="filterOrgName">Organization Name</label>
+                        <span class="label-sub">LBN, DBA, Former LBN, or Other Name</span>
+                        <input type="text" id="filterOrgName" name="organization_name" placeholder="e.g. Mayo Clinic, Mercy Hospital*">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-half">
+                            <label for="filterAoFirstName">Auth. Official First Name</label>
+                            <input type="text" id="filterAoFirstName" name="authorized_official_first_name" placeholder="AO First Name">
+                        </div>
+                        <div class="form-group col-half">
+                            <label for="filterAoLastName">Auth. Official Last Name</label>
+                            <input type="text" id="filterAoLastName" name="authorized_official_last_name" placeholder="AO Last Name">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 4: Location Filters -->
+                <div class="filter-section">
+                    <div class="section-heading">4. Location & Address</div>
+
+                    <div class="form-row">
+                        <div class="form-group col-half">
+                            <label for="filterCity">City</label>
+                            <input type="text" id="filterCity" name="city" placeholder="e.g. Chicago">
+                        </div>
+                        <div class="form-group col-half">
+                            <label for="filterState">State</label>
+                            <select id="filterState" name="state">
+                                <!-- Populated dynamically from constants -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="filterCountry">Country</label>
+                        <select id="filterCountry" name="country_code">
+                            <!-- Populated dynamically with all 250 countries -->
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-half">
+                            <label for="filterPostalCode">Postal Code</label>
+                            <input type="text" id="filterPostalCode" name="postal_code" placeholder="ZIP / ZIP+4 (e.g. 90210)">
+                        </div>
+                        <div class="form-group col-half">
+                            <label for="filterAddressType">Address Type</label>
+                            <select id="filterAddressType" name="address_purpose">
+                                <option value="">Any</option>
+                                <option value="PRIMARY">Primary Location</option>
+                                <option value="SECONDARY">Secondary Location</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <div class="form-actions">
+                    <button type="button" id="executeSearchBtn" class="btn-primary">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                        <span>Fetch Matching Records</span>
+                    </button>
+                </div>
+            </form>
+        </aside>
+
+        <!-- Right Content & Results Panel -->
+        <section class="results-panel">
+            <!-- Metrics Dashboard: Prominently displaying Total Records Found and Display Status -->
+            <div class="metrics-dashboard" id="metricsDashboard" style="display: none;">
+                <div class="metric-card highlight">
+                    <div class="metric-label">Total Records Found</div>
+                    <div class="metric-value" id="metricTotalFound">0</div>
+                    <div class="metric-sub" id="metricBatchStatus">Official CMS NPPES Registry</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Currently Displayed</div>
+                    <div class="metric-value" id="metricCurrentlyDisplayed">0</div>
+                    <div class="metric-sub" id="metricPageInfo">Page 1 of 1</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">API Batch Status</div>
+                    <div class="metric-value text-success" id="metricApiStatus">Complete</div>
+                    <div class="metric-sub" id="metricBatchesFetched">Multi-batch engine active</div>
+                </div>
+            </div>
+
+            <!-- Top Controls Bar -->
+            <div class="results-toolbar">
+                <div class="results-summary">
+                    <h3 id="resultCountHeader">CMS Registry Results</h3>
+                    <p id="resultCountSub">Select or enter filters to retrieve all matching records from the NPPES database in real time.</p>
+                </div>
+
+                <div class="toolbar-actions">
+                    <!-- In-page Search / Quick Filter -->
+                    <div class="quick-filter-wrapper">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                        <input type="text" id="quickFilterInput" placeholder="Filter retrieved records..." title="Fast client-side filter within retrieved records">
+                    </div>
+
+                    <!-- View toggle: Table or Cards -->
+                    <div class="view-switch-group">
+                        <button type="button" class="btn-icon active" id="viewCardsBtn" title="Cards View">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"/>
+                                <rect x="14" y="3" width="7" height="7"/>
+                                <rect x="14" y="14" width="7" height="7"/>
+                                <rect x="3" y="14" width="7" height="7"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn-icon" id="viewTableBtn" title="Table View">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="3" y1="6" x2="21" y2="6"/>
+                                <line x1="3" y1="12" x2="21" y2="12"/>
+                                <line x1="3" y1="18" x2="21" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Page Size Selector (Includes Show All option) -->
+                    <div class="page-size-selector">
+                        <label for="pageSizeSelect">Display:</label>
+                        <select id="pageSizeSelect">
+                            <option value="10">10 per page</option>
+                            <option value="25" selected>25 per page</option>
+                            <option value="50">50 per page</option>
+                            <option value="100">100 per page</option>
+                            <option value="all">Show All</option>
+                        </select>
+                    </div>
+
+                    <!-- Export Buttons (Exports 100% of matching records) -->
+                    <div class="export-dropdown">
+                        <button type="button" class="btn-secondary" id="exportCsvBtn" title="Export all matching records to CSV">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            <span>Export CSV</span>
+                        </button>
+                        <button type="button" class="btn-secondary" id="exportJsonBtn" title="Export all matching records to JSON">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                                <polyline points="10 9 9 9 8 9"/>
+                            </svg>
+                            <span>JSON</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Deep Partition Notice (Shown if query reaches the single-query 1,200 limit) -->
+            <div class="deep-partition-banner" id="deepPartitionBanner" style="display: none;">
+                <div class="deep-banner-content">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                    <span><strong>High Volume Query:</strong> Retained all 1,200 records available in this batch from CMS. Click below to execute deep entity partitioning (NPI-1 + NPI-2) to pull up to 2,400+ records.</span>
+                </div>
+                <button type="button" class="btn-deep-fetch" id="deepFetchBtn">
+                    Deep Partition Fetch
+                </button>
+            </div>
+
+            <!-- Active Filter Badges Container -->
+            <div class="active-filter-bar" id="activeFilterBar" style="display: none;">
+                <span class="active-label">Active Filters:</span>
+                <div class="filter-tag-list" id="filterTagList"></div>
+            </div>
+
+            <!-- Notice / API Error Box -->
+            <div class="alert-box" id="errorAlertBox" style="display: none;">
+                <div class="alert-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                </div>
+                <div class="alert-content">
+                    <h4 id="alertTitle">Search Criteria Notice</h4>
+                    <p id="alertMessage">Please provide additional criteria.</p>
+                </div>
+            </div>
+
+            <!-- Results View Area -->
+            <div class="results-content-area" id="resultsContentArea">
+                <!-- Initial Welcome State -->
+                <div class="empty-state" id="initialState">
+                    <div class="empty-icon-circle">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            <line x1="11" y1="8" x2="11" y2="14"/>
+                            <line x1="8" y1="11" x2="14" y2="11"/>
+                        </svg>
+                    </div>
+                    <h3>Ready to Search the National Provider Registry</h3>
+                    <p>Enter any combination of NPI, provider names, location, or taxonomy. The multi-batch engine retrieves <strong>all matching records</strong> directly from the official CMS NPPES API.</p>
+                    <div class="tips-box">
+                        <strong>Complete Dataset Retrieval Features:</strong>
+                        <ul>
+                            <li><strong>Multi-Batch Fetching:</strong> The backend automatically requests consecutive batches (`limit=200`) in parallel to fetch all available records without omissions.</li>
+                            <li><strong>Accurate Total Counts:</strong> Displays the actual total number of matching records (e.g. <em>Total Records Found: 1,200</em>).</li>
+                            <li><strong>Full Browsing & Export:</strong> Seamlessly browse across all pages or export 100% of matching records in CSV or JSON.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Loading Skeleton with Progress -->
+                <div class="loading-state" id="loadingState" style="display: none;">
+                    <div class="loading-progress-pill">
+                        <span class="spinner-ring"></span>
+                        <span id="loadingProgressText">Querying CMS NPPES API & batch-fetching all matching records...</span>
+                    </div>
+                    <div class="skeleton-card" v-for="n in 3">
+                        <div class="skeleton-line title"></div>
+                        <div class="skeleton-line subtitle"></div>
+                        <div class="skeleton-row">
+                            <div class="skeleton-box"></div>
+                            <div class="skeleton-box"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- No Results State -->
+                <div class="empty-state" id="noResultsState" style="display: none;">
+                    <div class="empty-icon-circle">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="8" y1="15" x2="16" y2="15"/>
+                            <line x1="9" y1="9" x2="9.01" y2="9"/>
+                            <line x1="15" y1="9" x2="15.01" y2="9"/>
+                        </svg>
+                    </div>
+                    <h3>No Matching Providers Found</h3>
+                    <p>No records matched your exact criteria in the CMS NPPES Registry. Try broadening your location or using wildcards (e.g. <code>Smith*</code>).</p>
+                </div>
+
+                <!-- Cards Container -->
+                <div class="cards-grid" id="cardsGrid" style="display: none;"></div>
+
+                <!-- Table Container -->
+                <div class="table-responsive" id="tableContainer" style="display: none;">
+                    <table class="data-table" id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>NPI & Type</th>
+                                <th>Provider / Organization Name</th>
+                                <th>Primary Taxonomy & Specialty</th>
+                                <th>Practice Location</th>
+                                <th>Phone</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Pagination Bar -->
+            <div class="pagination-footer" id="paginationFooter" style="display: none;">
+                <div class="pagination-info" id="paginationInfo">
+                    Showing 1 - 25 of 1,200 records
+                </div>
+                <div class="pagination-controls">
+                    <button type="button" class="btn-page" id="firstPageBtn" title="First Page">
+                        « First
+                    </button>
+                    <button type="button" class="btn-page" id="prevPageBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                        Previous
+                    </button>
+                    <div class="page-numbers" id="pageNumbers"></div>
+                    <button type="button" class="btn-page" id="nextPageBtn">
+                        Next
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                    <button type="button" class="btn-page" id="lastPageBtn" title="Last Page">
+                        Last »
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Provider Detailed Inspection Modal -->
+    <div class="modal-backdrop" id="providerModalBackdrop" style="display: none;">
+        <div class="modal-window">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span class="badge" id="modalEntityTypeBadge">Individual</span>
+                    <h2 id="modalProviderTitle">Provider Details</h2>
+                    <span class="npi-tag" id="modalNpiTag">NPI: 0000000000</span>
+                </div>
+                <button type="button" class="modal-close-btn" id="closeModalBtn" title="Close modal">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="modal-body" id="modalBody">
+                <!-- Navigation Tabs in Modal -->
+                <div class="modal-tabs">
+                    <button type="button" class="modal-tab active" data-tab="tab-overview">Overview</button>
+                    <button type="button" class="modal-tab" data-tab="tab-taxonomies">Taxonomies & Licenses</button>
+                    <button type="button" class="modal-tab" data-tab="tab-addresses">Addresses & Contact</button>
+                    <button type="button" class="modal-tab" data-tab="tab-raw">Exact API JSON</button>
+                </div>
+
+                <!-- Tab 1: Overview -->
+                <div class="tab-pane active" id="tab-overview">
+                    <div class="detail-grid" id="modalOverviewGrid"></div>
+                </div>
+
+                <!-- Tab 2: Taxonomies -->
+                <div class="tab-pane" id="tab-taxonomies">
+                    <div class="taxonomies-list" id="modalTaxonomiesList"></div>
+                </div>
+
+                <!-- Tab 3: Addresses -->
+                <div class="tab-pane" id="tab-addresses">
+                    <div class="addresses-list" id="modalAddressesList"></div>
+                </div>
+
+                <!-- Tab 4: Raw JSON -->
+                <div class="tab-pane" id="tab-raw">
+                    <div class="raw-json-header">
+                        <span>Exact, unmodified JSON response directly from CMS NPPES API:</span>
+                        <button type="button" class="btn-copy" id="copyRawJsonBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                            <span>Copy JSON</span>
+                        </button>
+                    </div>
+                    <pre class="raw-json-box"><code id="modalRawJsonCode"></code></pre>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <a href="#" target="_blank" rel="noopener noreferrer" class="btn-secondary" id="modalExternalLink">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                    <span>View on Official CMS Registry</span>
+                </a>
+                <button type="button" class="btn-primary" id="modalCloseActionBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Scripts -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
