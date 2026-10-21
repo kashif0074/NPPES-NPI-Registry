@@ -7,3 +7,19 @@ __pycache__/
 env/
 venv/
 .DS_Store
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Database and collected data
+nppes_emails.db
+*.db
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Logs
+*.log

@@ -286,6 +286,22 @@
 
                     <!-- Export Buttons (Exports 100% of matching records) -->
                     <div class="export-dropdown">
+                        <button type="button" class="btn-primary" id="enrichSelectedBtn" title="Discover official websites & extract public emails for selected providers" disabled>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                                <polyline points="22,6 12,13 2,6"/>
+                            </svg>
+                            <span id="enrichBtnLabel">Find Emails</span>
+                            <span class="badge selection-pill" id="selectionCountBadge" style="display:none;">0</span>
+                        </button>
+                        <button type="button" class="btn-secondary" id="exportEmailsBtn" title="Export all discovered provider emails to CSV">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            <span>Export Emails CSV</span>
+                        </button>
                         <button type="button" class="btn-secondary" id="exportCsvBtn" title="Export all matching records to CSV">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -344,6 +360,28 @@
                 </div>
             </div>
 
+            <!-- Batch Selection Strip -->
+            <div class="selection-actions-bar" id="selectionActionsBar" style="display: none;">
+                <div class="selection-status">
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="selectAllPageCheckbox">
+                        <span class="checkbox-indicator"></span>
+                        <span id="selectionStatusText"><strong>0</strong> selected on this page</span>
+                    </label>
+                    <button type="button" class="btn-link" id="selectAllMatchingBtn">Select all matching records</button>
+                    <button type="button" class="btn-link text-danger" id="clearSelectionBtn">Clear selection</button>
+                </div>
+                <div class="selection-btns">
+                    <button type="button" class="btn-primary btn-sm" id="barEnrichBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                            <polyline points="22,6 12,13 2,6"/>
+                        </svg>
+                        <span>Find Emails (<span id="barEnrichCount">0</span>)</span>
+                    </button>
+                </div>
+            </div>
+
             <!-- Results View Area -->
             <div class="results-content-area" id="resultsContentArea">
                 <!-- Initial Welcome State -->
@@ -359,11 +397,13 @@
                     <h3>Ready to Search the National Provider Registry</h3>
                     <p>Enter any combination of NPI, provider names, location, or taxonomy. The multi-batch engine retrieves <strong>all matching records</strong> directly from the official CMS NPPES API.</p>
                     <div class="tips-box">
-                        <strong>Complete Dataset Retrieval Features:</strong>
+                        <strong>Complete Dataset Retrieval & Email Discovery:</strong>
                         <ul>
-                            <li><strong>Multi-Batch Fetching:</strong> The backend automatically requests consecutive batches (`limit=200`) in parallel to fetch all available records without omissions.</li>
-                            <li><strong>Accurate Total Counts:</strong> Displays the actual total number of matching records (e.g. <em>Total Records Found: 1,200</em>).</li>
-                            <li><strong>Full Browsing & Export:</strong> Seamlessly browse across all pages or export 100% of matching records in CSV or JSON.</li>
+                            <li><strong>Multi-Batch Fetching:</strong> Automatically retrieves all available records directly from the official CMS NPPES API.</li>
+                            <li><strong>Provider Selection:</strong> Select specific providers or all matching records with one click.</li>
+                            <li><strong>Public Email Discovery:</strong> Discovers official clinic websites, crawls contact/team pages, and extracts public emails.</li>
+                            <li><strong>Syntax & DNS/MX Verification:</strong> Performs real-time RFC syntax validation and live domain MX record checks.</li>
+                            <li><strong>Export Enriched CSV:</strong> Export providers with their discovered websites and verified emails.</li>
                         </ul>
                     </div>
                 </div>
@@ -406,10 +446,14 @@
                     <table class="data-table" id="resultsTable">
                         <thead>
                             <tr>
+                                <th style="width: 44px; text-align: center;">
+                                    <input type="checkbox" id="thSelectAllCheckbox" title="Select all on this page">
+                                </th>
                                 <th>NPI & Type</th>
                                 <th>Provider / Organization Name</th>
                                 <th>Primary Taxonomy & Specialty</th>
                                 <th>Practice Location</th>
+                                <th>Discovered Emails & Website</th>
                                 <th>Phone</th>
                                 <th>Action</th>
                             </tr>
@@ -470,6 +514,7 @@
                 <!-- Navigation Tabs in Modal -->
                 <div class="modal-tabs">
                     <button type="button" class="modal-tab active" data-tab="tab-overview">Overview</button>
+                    <button type="button" class="modal-tab" data-tab="tab-emails">Emails & Website</button>
                     <button type="button" class="modal-tab" data-tab="tab-taxonomies">Taxonomies & Licenses</button>
                     <button type="button" class="modal-tab" data-tab="tab-addresses">Addresses & Contact</button>
                     <button type="button" class="modal-tab" data-tab="tab-raw">Exact API JSON</button>
@@ -480,17 +525,124 @@
                     <div class="detail-grid" id="modalOverviewGrid"></div>
                 </div>
 
-                <!-- Tab 2: Taxonomies -->
+                <!-- Tab 2: Discovered Emails & Website -->
+                <div class="tab-pane" id="tab-emails">
+                    <!-- Multi-Stage Research Controller -->
+                    <div class="research-panel-card">
+                        <div class="research-panel-header">
+                            <div>
+                                <h4 class="research-title">Public Email & Website Research</h4>
+                                <p class="research-sub">Multi-stage web search across official public provider sources (Tavily / Google Search).</p>
+                            </div>
+                            <div class="engine-picker">
+                                <label for="researchEngineSelect">Search Engine:</label>
+                                <select id="researchEngineSelect" class="form-select-sm">
+                                    <option value="tavily" selected>Tavily Search (Default)</option>
+                                    <option value="google">Google Custom Search</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Stages Workflow Buttons & Inputs -->
+                        <div class="research-stages-grid">
+                            <!-- Stage 1 -->
+                            <div class="stage-card">
+                                <div class="stage-header">
+                                    <span class="stage-number">1</span>
+                                    <span class="stage-name">Provider Name & Specialty</span>
+                                </div>
+                                <p class="stage-desc">Search public medical profiles and direct provider contact pages.</p>
+                                <button type="button" class="btn-primary btn-sm" id="researchProviderEmail">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8"/>
+                                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                    </svg>
+                                    <span>Research Provider Email</span>
+                                </button>
+                            </div>
+
+                            <!-- Stage 2 -->
+                            <div class="stage-card">
+                                <div class="stage-header">
+                                    <span class="stage-number">2</span>
+                                    <span class="stage-name">Associated Hospital / Clinic</span>
+                                </div>
+                                <div class="stage-inputs">
+                                    <input type="text" id="researchOrgInput" placeholder="Organization name (e.g. Mayo Clinic)" class="stage-input">
+                                    <input type="text" id="researchOrgDomainInput" placeholder="Domain (e.g. mayoclinic.org)" class="stage-input">
+                                </div>
+                                <button type="button" class="btn-secondary btn-sm" id="researchOrgBtn">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/>
+                                    </svg>
+                                    <span>Search Hospital / Clinic</span>
+                                </button>
+                            </div>
+
+                            <!-- Stage 3 -->
+                            <div class="stage-card">
+                                <div class="stage-header">
+                                    <span class="stage-number">3</span>
+                                    <span class="stage-name">Official Website Contact</span>
+                                </div>
+                                <p class="stage-desc">Search provider's official clinic domain and contact pages.</p>
+                                <button type="button" class="btn-secondary btn-sm" id="researchWebsiteBtn">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <line x1="2" y1="12" x2="22" y2="12"/>
+                                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                                    </svg>
+                                    <span>Official Website Search</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Research Status Pill & Query Display -->
+                        <div class="research-status-row" id="researchStatusRow" style="display: none;">
+                            <div id="emailResearchStatus" class="research-status-pill">Ready</div>
+                            <div id="emailResearchQuery" class="research-query-box"></div>
+                        </div>
+
+                        <!-- Discovered Public Sources List -->
+                        <div class="research-sources-wrapper" id="researchSourcesWrapper" style="display: none;">
+                            <div class="sources-header">
+                                <h5>Discovered Public Sources (<span id="sourcesCount">0</span>)</h5>
+                                <span class="text-muted" style="font-size: 0.78rem;">Click a source to inspect or extract verified contact emails</span>
+                            </div>
+                            <ul id="emailResearchSources" class="research-sources-list"></ul>
+                        </div>
+                    </div>
+
+                    <!-- Verified Attributed Emails & Website Box -->
+                    <div class="emails-pane-header">
+                        <div id="modalWebsiteSection" class="modal-website-box">
+                            <span class="modal-info-label">Official Clinic / Provider Website:</span>
+                            <div id="modalWebsiteLinkWrapper" class="modal-website-link">
+                                <em>Searching...</em>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary btn-sm" id="modalEnrichSingleBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                            </svg>
+                            <span>Crawl Discovered Website</span>
+                        </button>
+                    </div>
+
+                    <div class="emails-list-container" id="modalEmailsList"></div>
+                </div>
+
+                <!-- Tab 3: Taxonomies -->
                 <div class="tab-pane" id="tab-taxonomies">
                     <div class="taxonomies-list" id="modalTaxonomiesList"></div>
                 </div>
 
-                <!-- Tab 3: Addresses -->
+                <!-- Tab 4: Addresses -->
                 <div class="tab-pane" id="tab-addresses">
                     <div class="addresses-list" id="modalAddressesList"></div>
                 </div>
 
-                <!-- Tab 4: Raw JSON -->
+                <!-- Tab 5: Raw JSON -->
                 <div class="tab-pane" id="tab-raw">
                     <div class="raw-json-header">
                         <span>Exact, unmodified JSON response directly from CMS NPPES API:</span>
@@ -516,6 +668,81 @@
                     <span>View on Official CMS Registry</span>
                 </a>
                 <button type="button" class="btn-primary" id="modalCloseActionBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Enrichment Progress Modal -->
+    <div class="modal-backdrop" id="enrichModalBackdrop" style="display: none;">
+        <div class="modal-window enrich-dialog">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span class="badge active" id="enrichStatusBadge">Running</span>
+                    <h2>Email Discovery & Verification</h2>
+                </div>
+                <button type="button" class="modal-close-btn" id="closeEnrichModalBtn" title="Dismiss dialog">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="enrich-progress-card">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="enrichProgressBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-meta-row">
+                        <span id="enrichPercentText">0% Complete</span>
+                        <span id="enrichCountsText">0 / 0 Providers Processed</span>
+                    </div>
+                </div>
+
+                <div class="enrich-metrics-grid">
+                    <div class="enrich-metric-box">
+                        <div class="metric-num" id="enrichTotalSelected">0</div>
+                        <div class="metric-title">Selected Providers</div>
+                    </div>
+                    <div class="enrich-metric-box">
+                        <div class="metric-num text-info" id="enrichCompletedCount">0</div>
+                        <div class="metric-title">Completed</div>
+                    </div>
+                    <div class="enrich-metric-box">
+                        <div class="metric-num text-success" id="enrichFoundEmails">0</div>
+                        <div class="metric-title">Emails Discovered</div>
+                    </div>
+                </div>
+
+                <div class="enrich-pipeline-steps">
+                    <div class="pipeline-step-item">
+                        <div class="step-bullet done"></div>
+                        <div class="step-text">Query official CMS NPPES direct endpoints</div>
+                    </div>
+                    <div class="pipeline-step-item">
+                        <div class="step-bullet done"></div>
+                        <div class="step-text">Discover official clinic website via OpenStreetMap & web search</div>
+                    </div>
+                    <div class="pipeline-step-item">
+                        <div class="step-bullet done"></div>
+                        <div class="step-text">Crawl contact, team, and provider profile pages</div>
+                    </div>
+                    <div class="pipeline-step-item">
+                        <div class="step-bullet done"></div>
+                        <div class="step-text">Validate RFC syntax and check live domain DNS/MX records</div>
+                    </div>
+                </div>
+
+                <div class="enrich-actions-footer">
+                    <button type="button" class="btn-secondary" id="dismissEnrichModalBtn">Run in Background</button>
+                    <button type="button" class="btn-primary" id="downloadEnrichedCsvBtn" style="display: none;">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        <span>Download Enriched CSV</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

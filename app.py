@@ -1,17 +1,25 @@
 """
-app.py - High-Performance Python Backend for NPPES NPI Registry Live Filtering
+app.py - High-Performance Python Backend for NPPES NPI Registry Live Filtering & Provider Email Enrichment
 Interacts directly with the official CMS NPPES Read API v2.1.
-Implements multi-batch fetching and partitioning to retrieve all matching records
-from the official CMS registry without missing records due to pagination limits.
-Completely standalone implementation.
+Implements multi-batch fetching to retrieve all matching records without pagination caps.
+Integrates complete provider email and website discovery pipeline:
+- Website Finder (NPPES endpoints, OpenStreetMap, Web Search)
+- Targeted Web Crawler
+- Mailto & Body Email Extractor
+- DNS / MX Record Validator
+- SQLite & PostgreSQL Storage
+- Complete CSV Exporter
+- Automated Scheduler
 """
 
 import csv
 import io
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 from flask import Flask, jsonify, render_template, request, Response
 
@@ -22,10 +30,37 @@ from constants import (
     NPI_TYPES,
     POPULAR_TAXONOMIES,
 )
+from email_finder.database import (
+    init_db,
+    get_connection,
+    get_provider_emails,
+    get_all_emails_summary,
+    create_job,
+    update_job,
+    get_job,
+    save_email,
+    save_website,
+)
+from email_finder.service import process_provider
+from email_finder.exporter import generate_email_csv
+from email_finder.search import SearchError
+from email_finder.research import (
+    research_provider,
+    normalize_provider,
+    extract_and_attribute_emails,
+    is_safe_public_url,
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("nppes_app")
+
+# Initialize database schema upon server start
+try:
+    init_db()
+    logger.info("Database initialized successfully.")
+except Exception as e:
+    logger.warning("Database initialization warning: %s", e)
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -35,6 +70,9 @@ API_VERSION = "2.1"
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_CMS_BATCH_SIZE = 200
 CMS_SKIP_OFFSETS = [200, 400, 600, 800, 1000]
+
+# Background worker executor for email discovery jobs
+enrich_executor = ThreadPoolExecutor(max_workers=5)
 
 
 def fetch_single_batch(params: Dict[str, Any], skip: int = 0) -> Tuple[int, List[Dict[str, Any]], Dict[str, Any]]:
@@ -71,7 +109,6 @@ def fetch_all_matching_records(base_params: Dict[str, Any], deep_partition: bool
     hit_cap = False
 
     # Check if we should partition across entity types (NPI-1 and NPI-2)
-    # when user selected 'Any' entity type and deep_partition is requested
     query_variants: List[Dict[str, Any]] = []
     if deep_partition and "enumeration_type" not in base_params:
         for etype in ["NPI-1", "NPI-2"]:
@@ -126,6 +163,10 @@ def fetch_all_matching_records(base_params: Dict[str, Any], deep_partition: bool
         "is_capped": hit_cap,
     }
 
+
+# ==========================================
+# Application Routes
+# ==========================================
 
 @app.route("/")
 def index():
@@ -365,6 +406,201 @@ def export_results():
     )
 
 
+# ==========================================
+# Email & Website Enrichment API Endpoints
+# ==========================================
+
+@app.route("/api/enrich", methods=["POST"])
+def enrich_providers():
+    """
+    Asynchronously enriches selected or retrieved providers:
+    1. Finds official website
+    2. Crawls contact & team pages
+    3. Extracts public emails
+    4. Validates syntax and live DNS/MX records
+    5. Saves results in database
+    """
+    data = request.get_json() or {}
+    records = data.get("records", [])
+
+    if not records:
+        return jsonify({"success": False, "error": "No provider records selected for enrichment."}), 400
+
+    job_id = str(uuid.uuid4())
+    create_job(job_id=job_id, total=len(records))
+
+    def background_worker(recs: List[Dict[str, Any]], j_id: str):
+        completed = 0
+        found_emails = 0
+        for rec in recs:
+            try:
+                emails_found = process_provider(rec)
+                found_emails += emails_found
+            except Exception as exc:
+                logger.error("Error enriching provider in background: %s", exc)
+            completed += 1
+            update_job(job_id=j_id, completed=completed, found_emails=found_emails, status="running")
+
+        update_job(job_id=j_id, completed=completed, found_emails=found_emails, status="completed")
+        logger.info("Enrichment job %s completed. Total processed: %d, Emails found: %d", j_id, completed, found_emails)
+
+    enrich_executor.submit(background_worker, records, job_id)
+
+    return jsonify({
+        "success": True,
+        "job_id": job_id,
+        "total": len(records),
+        "status": "running",
+        "message": f"Started email discovery and validation for {len(records)} provider(s)."
+    })
+
+
+@app.route("/api/enrich/status/<job_id>", methods=["GET"])
+def enrich_status(job_id):
+    """Returns real-time progress of an email enrichment job."""
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"success": False, "error": "Job not found"}), 404
+
+    total = job.get("total", 0)
+    completed = job.get("completed", 0)
+    percent = round((completed / total * 100), 1) if total > 0 else 0
+
+    return jsonify({
+        "success": True,
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "total": total,
+        "completed": completed,
+        "found_emails": job.get("found_emails", 0),
+        "percent": percent,
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at")
+    })
+
+
+@app.route("/api/emails/<npi>", methods=["GET"])
+def get_emails(npi):
+    """Returns all discovered and verified emails for a specific provider NPI."""
+    rows = get_provider_emails(npi)
+    return jsonify({
+        "success": True,
+        "npi": npi,
+        "total_emails": len(rows),
+        "emails": rows
+    })
+
+
+@app.route("/api/emails/summary", methods=["GET"])
+def get_emails_summary():
+    """
+    Returns map of all providers with found emails.
+    Used by frontend to render email badges instantly on cards and table.
+    """
+    summary = get_all_emails_summary()
+    return jsonify({
+        "success": True,
+        "summary": summary
+    })
+
+
+@app.route("/api/export-emails", methods=["GET"])
+def export_emails():
+    """Exports enriched dataset (providers, websites, verified emails) to CSV."""
+    only_with_emails = request.args.get("only_with_emails", "false").lower() in ("true", "1", "yes")
+    csv_content = generate_email_csv(only_with_emails=only_with_emails)
+
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=nppes_provider_emails.csv"}
+    )
+
+
+@app.post("/api/email-research")
+def email_research():
+    """
+    Multi-stage provider email research using live search engines (Tavily default, Google optional).
+    Stages:
+      1. 'provider': Direct provider name + location + specialty query
+      2. 'organization': Associated hospital/clinic query with optional domain filtering
+      3. 'official_website': Official provider website and contact query
+    """
+    body = request.get_json(silent=True) or {}
+    record = body.get("record")
+    domains = body.get("domains") or []
+
+    if not isinstance(record, dict):
+        return jsonify({"error": "A provider record is required"}), 400
+
+    if (
+        not isinstance(domains, list)
+        or len(domains) > 5
+        or not all(isinstance(domain, str) for domain in domains)
+    ):
+        return jsonify({"error": "Invalid domains"}), 400
+
+    stage = body.get("stage", "provider")
+    organization = body.get("organization", "").strip()
+    provider_engine = body.get("provider")  # 'tavily' or 'google'
+
+    try:
+        result = research_provider(
+            record=record,
+            stage=stage,
+            organization=organization,
+            domains=domains,
+            provider=provider_engine,
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except SearchError as error:
+        return jsonify({
+            "status": "Search Incomplete",
+            "error": str(error),
+        }), 502
+
+
+@app.post("/api/email-extract-source")
+def email_extract_source():
+    """
+    Extracts, validates, and attributes emails from a confirmed public source URL.
+    Applies SSRF safeguards and updates provider database.
+    """
+    body = request.get_json(silent=True) or {}
+    url = body.get("url", "").strip()
+    record = body.get("record") or {}
+
+    if not url or not is_safe_public_url(url):
+        return jsonify({"error": "Invalid or disallowed source URL."}), 400
+
+    provider_info = normalize_provider(record)
+    candidates = extract_and_attribute_emails(url, provider_info)
+
+    npi = provider_info.get("npi")
+    if npi:
+        # Save official website if applicable
+        save_website(npi, url, "search_source")
+        for c in candidates:
+            save_email(
+                npi=npi,
+                email=c["email"],
+                email_type=c["email_type"],
+                source_url=url,
+                mx_valid=c["mx_valid"],
+                status=c["attribution_status"]
+            )
+
+    return jsonify({
+        "success": True,
+        "url": url,
+        "npi": npi,
+        "total_candidates": len(candidates),
+        "candidates": candidates
+    })
+
+
 if __name__ == "__main__":
-    logger.info("Starting NPPES NPI Registry Server on http://127.0.0.1:5000")
+    logger.info("Starting NPPES NPI Registry & Email Enrichment Server on http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=True)

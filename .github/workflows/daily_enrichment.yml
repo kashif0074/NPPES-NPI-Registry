@@ -1,0 +1,37 @@
+name: Daily Provider Email Discovery & Enrichment
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering from GitHub UI
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Provider Enrichment Task
+        run: |
+          python scheduler.py --limit 100 --output daily_provider_emails.csv
+
+      - name: Upload Enriched CSV Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-provider-emails
+          path: daily_provider_emails.csv
+          retention-days: 14

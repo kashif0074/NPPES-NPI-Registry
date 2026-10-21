@@ -86,17 +86,60 @@ Navigate to **`http://127.0.0.1:5000`**
 ## 📁 Project Directory Structure
 ```
 c:\Users\LAPTOP\Desktop\data\
-├── app.py                 # Flask server with multi-batch fetcher, caching, and export endpoints
-├── constants.py           # Master lists for States, 250 Countries, Address Types, and Taxonomies
-├── requirements.txt       # Dependencies (Flask, requests)
-├── README.md              # Project documentation
+├── app.py                         # Flask server with multi-batch engine & email enrichment routes
+├── constants.py                   # Master lists for States (62), Countries (250), Address Types, Taxonomies
+├── scheduler.py                   # Top-level runner for Cron & GitHub Actions daily discovery
+├── requirements.txt               # Dependencies (Flask, requests, httpx, dnspython, email-validator, bs4)
+├── README.md                      # Project documentation
+│
+├── email_finder/                  # Complete Provider Email & Website Enrichment Engine
+│   ├── __init__.py                # Package init with exposed API functions
+│   ├── website_finder.py          # Finds clinic website via NPPES, OpenStreetMap, & web search
+│   ├── crawler.py                 # Crawls contact, team, provider & staff pages
+│   ├── email_extractor.py         # Extracts mailto links, body patterns, obfuscated & JSON-LD emails
+│   ├── extractor.py               # Backwards-compatibility wrapper
+│   ├── validator.py               # RFC syntax check & live DNS MX record verification
+│   ├── database.py                # Thread-safe storage layer supporting SQLite (WAL) & PostgreSQL
+│   ├── exporter.py                # Final CSV exporter for enriched providers & emails
+│   └── scheduler.py               # Automated scheduled batch enrichment module
+│
+├── .github/workflows/
+│   └── daily_enrichment.yml       # Automated GitHub Actions workflow running on daily cron
 │
 ├── static/
 │   ├── css/
-│   │   └── styles.css     # Clean clinical healthcare design system, metrics dashboard, responsive layout
+│   │   └── styles.css             # Healthcare UI, selection bar, email badges, enrichment progress dialog
 │   └── js/
-│       └── app.js         # Real-time multi-batch dataset controller, pagination, modal, exports
+│       └── app.js                 # Live search, provider selection, real-time job polling, email inspector
 │
 └── templates/
-    └── index.html         # Filtering interface with Metrics Dashboard & Full Dataset View
+    └── index.html                 # Single page application with filters, selection strip, and inspection modal
 ```
+
+---
+
+## 🔬 Email Discovery & Verification Pipeline
+
+```
+NPPES filter results
+        ↓
+Select providers (Single / Page / All matching)
+        ↓
+Find official clinic/hospital website (NPPES endpoints → OpenStreetMap Overpass → Web Search)
+        ↓
+Crawl contact/team/provider pages (homepage + /contact, /team, /providers, /locations)
+        ↓
+Extract public emails (mailto: links, body regex, obfuscated patterns, JSON-LD)
+        ↓
+Validate syntax & live DNS/MX records (dnspython + email-validator)
+        ↓
+Show email badges + export enriched CSV
+```
+
+### Running the Daily Scheduler
+To run the automated enrichment task locally or via cron:
+```bash
+python scheduler.py --limit 50 --output daily_provider_emails.csv
+```
+This is also configured to run automatically via GitHub Actions every day at 02:00 UTC (`.github/workflows/daily_enrichment.yml`).
+

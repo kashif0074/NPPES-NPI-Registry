@@ -1,7 +1,10 @@
 /**
- * app.js - CMS NPPES NPI Registry Live Filtering & Complete Dataset Client
- * Retrieves all matching records via backend multi-batch fetching, displays exact
- * total matching counts, and provides seamless full-dataset pagination and inspection.
+ * app.js - CMS NPPES NPI Registry Live Filtering & Provider Email Discovery Studio
+ * Integrates:
+ * 1. Multi-batch retrieval of matching records from official CMS NPPES API v2.1
+ * 2. Provider selection for single or bulk email & website enrichment
+ * 3. Targeted crawling, public email extraction, and live DNS/MX verification
+ * 4. Discovered emails display badges and full CSV export
  */
 
 (function () {
@@ -21,6 +24,12 @@
         metadata: null,
         selectedProvider: null,
         isDeepPartition: false,
+
+        // Selection & Email Discovery State
+        selectedNpis: new Set(),
+        enrichedEmailsMap: {},      // { [npi]: [ { email, email_type, mx_valid, status, website } ] }
+        activeJobId: null,
+        jobPollInterval: null,
     };
 
     // DOM Elements
@@ -83,6 +92,16 @@
         cardsGrid: document.getElementById("cardsGrid"),
         tableContainer: document.getElementById("tableContainer"),
         tableBody: document.getElementById("tableBody"),
+        thSelectAllCheckbox: document.getElementById("thSelectAllCheckbox"),
+
+        // Batch Selection Strip
+        selectionActionsBar: document.getElementById("selectionActionsBar"),
+        selectAllPageCheckbox: document.getElementById("selectAllPageCheckbox"),
+        selectionStatusText: document.getElementById("selectionStatusText"),
+        selectAllMatchingBtn: document.getElementById("selectAllMatchingBtn"),
+        clearSelectionBtn: document.getElementById("clearSelectionBtn"),
+        barEnrichBtn: document.getElementById("barEnrichBtn"),
+        barEnrichCount: document.getElementById("barEnrichCount"),
 
         // Toolbar
         viewCardsBtn: document.getElementById("viewCardsBtn"),
@@ -90,6 +109,10 @@
         pageSizeSelect: document.getElementById("pageSizeSelect"),
         exportCsvBtn: document.getElementById("exportCsvBtn"),
         exportJsonBtn: document.getElementById("exportJsonBtn"),
+        exportEmailsBtn: document.getElementById("exportEmailsBtn"),
+        enrichSelectedBtn: document.getElementById("enrichSelectedBtn"),
+        enrichBtnLabel: document.getElementById("enrichBtnLabel"),
+        selectionCountBadge: document.getElementById("selectionCountBadge"),
 
         // Pagination
         paginationFooter: document.getElementById("paginationFooter"),
@@ -100,7 +123,7 @@
         nextPageBtn: document.getElementById("nextPageBtn"),
         lastPageBtn: document.getElementById("lastPageBtn"),
 
-        // Modal
+        // Provider Inspection Modal
         providerModalBackdrop: document.getElementById("providerModalBackdrop"),
         closeModalBtn: document.getElementById("closeModalBtn"),
         modalCloseActionBtn: document.getElementById("modalCloseActionBtn"),
@@ -113,12 +136,46 @@
         modalRawJsonCode: document.getElementById("modalRawJsonCode"),
         copyRawJsonBtn: document.getElementById("copyRawJsonBtn"),
         modalExternalLink: document.getElementById("modalExternalLink"),
+
+        // Modal Email Tab Elements
+        modalWebsiteSection: document.getElementById("modalWebsiteSection"),
+        modalWebsiteLinkWrapper: document.getElementById("modalWebsiteLinkWrapper"),
+        modalEnrichSingleBtn: document.getElementById("modalEnrichSingleBtn"),
+        modalEmailsList: document.getElementById("modalEmailsList"),
+
+        // Multi-Stage Research Elements
+        researchProviderEmail: document.getElementById("researchProviderEmail"),
+        researchOrgBtn: document.getElementById("researchOrgBtn"),
+        researchOrgInput: document.getElementById("researchOrgInput"),
+        researchOrgDomainInput: document.getElementById("researchOrgDomainInput"),
+        researchWebsiteBtn: document.getElementById("researchWebsiteBtn"),
+        researchEngineSelect: document.getElementById("researchEngineSelect"),
+        researchStatusRow: document.getElementById("researchStatusRow"),
+        emailResearchStatus: document.getElementById("emailResearchStatus"),
+        emailResearchQuery: document.getElementById("emailResearchQuery"),
+        researchSourcesWrapper: document.getElementById("researchSourcesWrapper"),
+        sourcesCount: document.getElementById("sourcesCount"),
+        emailResearchSources: document.getElementById("emailResearchSources"),
+
+        // Live Enrichment Progress Dialog
+        enrichModalBackdrop: document.getElementById("enrichModalBackdrop"),
+        closeEnrichModalBtn: document.getElementById("closeEnrichModalBtn"),
+        dismissEnrichModalBtn: document.getElementById("dismissEnrichModalBtn"),
+        downloadEnrichedCsvBtn: document.getElementById("downloadEnrichedCsvBtn"),
+        enrichProgressBar: document.getElementById("enrichProgressBar"),
+        enrichPercentText: document.getElementById("enrichPercentText"),
+        enrichCountsText: document.getElementById("enrichCountsText"),
+        enrichTotalSelected: document.getElementById("enrichTotalSelected"),
+        enrichCompletedCount: document.getElementById("enrichCompletedCount"),
+        enrichFoundEmails: document.getElementById("enrichFoundEmails"),
+        enrichStatusBadge: document.getElementById("enrichStatusBadge"),
     };
 
     // Initialize application
     async function init() {
         bindEvents();
         await loadMetadata();
+        await loadEnrichedSummary();
     }
 
     // Load backend metadata (States, Countries, Taxonomies)
@@ -159,9 +216,25 @@
         }
     }
 
+    // Load map of existing discovered emails from database
+    async function loadEnrichedSummary() {
+        try {
+            const resp = await fetch("/api/emails/summary");
+            const data = await resp.json();
+            if (data.success && data.summary) {
+                state.enrichedEmailsMap = data.summary;
+                // Re-render current page to update badges if results exist
+                if (state.filteredRecords.length > 0) {
+                    renderCurrentPage();
+                }
+            }
+        } catch (err) {
+            console.debug("Could not load enriched emails summary:", err);
+        }
+    }
+
     // Bind event listeners
     function bindEvents() {
-        // Live auto-filter toggle (if present)
         if (elements.liveSearchToggle) {
             elements.liveSearchToggle.addEventListener("change", (e) => {
                 state.isLiveFiltering = e.target.checked;
@@ -212,7 +285,7 @@
             });
         });
 
-        // Select & Radio listeners (Immediate live filtering)
+        // Select & Radio listeners
         [elements.stateSelect, elements.countrySelect, elements.addressType].forEach(select => {
             select.addEventListener("change", () => {
                 if (state.isLiveFiltering) {
@@ -281,6 +354,82 @@
             }
         });
 
+        // Selection Handlers
+        if (elements.selectAllPageCheckbox) {
+            elements.selectAllPageCheckbox.addEventListener("change", (e) => {
+                toggleSelectAllPage(e.target.checked);
+            });
+        }
+
+        if (elements.thSelectAllCheckbox) {
+            elements.thSelectAllCheckbox.addEventListener("change", (e) => {
+                toggleSelectAllPage(e.target.checked);
+            });
+        }
+
+        if (elements.selectAllMatchingBtn) {
+            elements.selectAllMatchingBtn.addEventListener("click", () => {
+                state.filteredRecords.forEach(r => state.selectedNpis.add(String(r.number)));
+                updateSelectionUI();
+                renderCurrentPage();
+            });
+        }
+
+        if (elements.clearSelectionBtn) {
+            elements.clearSelectionBtn.addEventListener("click", () => {
+                state.selectedNpis.clear();
+                updateSelectionUI();
+                renderCurrentPage();
+            });
+        }
+
+        // Email Enrichment Triggers
+        elements.enrichSelectedBtn.addEventListener("click", () => {
+            triggerEnrichmentForSelected();
+        });
+
+        if (elements.barEnrichBtn) {
+            elements.barEnrichBtn.addEventListener("click", () => {
+                triggerEnrichmentForSelected();
+            });
+        }
+
+        if (elements.modalEnrichSingleBtn) {
+            elements.modalEnrichSingleBtn.addEventListener("click", () => {
+                if (state.selectedProvider) {
+                    triggerEnrichmentForRecords([state.selectedProvider]);
+                }
+            });
+        }
+
+        // Multi-Stage Public Research Handlers
+        if (elements.researchProviderEmail) {
+            elements.researchProviderEmail.addEventListener("click", () => {
+                executeResearch("provider");
+            });
+        }
+
+        if (elements.researchOrgBtn) {
+            elements.researchOrgBtn.addEventListener("click", () => {
+                const orgName = elements.researchOrgInput ? elements.researchOrgInput.value.trim() : "";
+                const domain = elements.researchOrgDomainInput ? elements.researchOrgDomainInput.value.trim() : "";
+                executeResearch("organization", orgName, domain ? [domain] : []);
+            });
+        }
+
+        if (elements.researchWebsiteBtn) {
+            elements.researchWebsiteBtn.addEventListener("click", () => {
+                executeResearch("official_website");
+            });
+        }
+
+        // Progress Dialog Controls
+        elements.closeEnrichModalBtn.addEventListener("click", closeEnrichModal);
+        elements.dismissEnrichModalBtn.addEventListener("click", closeEnrichModal);
+        elements.downloadEnrichedCsvBtn.addEventListener("click", () => {
+            window.location.href = "/api/export-emails";
+        });
+
         // Quick Presets
         document.querySelectorAll(".preset-chip").forEach(chip => {
             chip.addEventListener("click", () => {
@@ -291,6 +440,9 @@
         // Exports
         elements.exportCsvBtn.addEventListener("click", () => triggerExport("csv"));
         elements.exportJsonBtn.addEventListener("click", () => triggerExport("json"));
+        elements.exportEmailsBtn.addEventListener("click", () => {
+            window.location.href = "/api/export-emails";
+        });
 
         // Modal Close handlers
         elements.closeModalBtn.addEventListener("click", closeModal);
@@ -299,7 +451,10 @@
             if (e.target === elements.providerModalBackdrop) closeModal();
         });
         document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") closeModal();
+            if (e.key === "Escape") {
+                closeModal();
+                closeEnrichModal();
+            }
         });
 
         // Modal Tabs
@@ -375,12 +530,15 @@
             showState("initial");
             elements.metricsDashboard.style.display = "none";
             elements.deepPartitionBanner.style.display = "none";
+            elements.selectionActionsBar.style.display = "none";
             elements.resultCountHeader.textContent = "CMS Registry Results";
             elements.resultCountSub.textContent = "Enter filters to query the NPPES database in real time.";
             elements.paginationFooter.style.display = "none";
             state.allRecords = [];
             state.filteredRecords = [];
             state.totalRecordsFound = 0;
+            state.selectedNpis.clear();
+            updateSelectionUI();
             return;
         }
 
@@ -400,19 +558,21 @@
             const data = await response.json();
             elements.executeSearchBtn.disabled = false;
 
-            // Handle API errors / Notice responses
             if (!data.success) {
                 const message = data.error_message || (data.errors && data.errors.map(e => e.description).join("; ")) || "Invalid search query";
                 showAlert("CMS API Notice", message);
                 showState("noResults");
                 elements.metricsDashboard.style.display = "none";
                 elements.deepPartitionBanner.style.display = "none";
+                elements.selectionActionsBar.style.display = "none";
                 elements.resultCountHeader.textContent = "0 Providers Found";
                 elements.resultCountSub.textContent = "Please adjust your search criteria according to CMS requirements.";
                 elements.paginationFooter.style.display = "none";
                 state.allRecords = [];
                 state.filteredRecords = [];
                 state.totalRecordsFound = 0;
+                state.selectedNpis.clear();
+                updateSelectionUI();
                 return;
             }
 
@@ -427,9 +587,12 @@
                 showState("noResults");
                 elements.metricsDashboard.style.display = "none";
                 elements.deepPartitionBanner.style.display = "none";
+                elements.selectionActionsBar.style.display = "none";
                 elements.resultCountHeader.textContent = "0 Providers Found";
                 elements.resultCountSub.textContent = "No matching providers registered in CMS NPPES for these criteria.";
                 elements.paginationFooter.style.display = "none";
+                state.selectedNpis.clear();
+                updateSelectionUI();
                 return;
             }
 
@@ -440,27 +603,29 @@
             elements.metricApiStatus.textContent = "100% Retrieved";
             elements.metricsDashboard.style.display = "grid";
 
-            // Show deep partition banner if single query reached ceiling and deep wasn't run yet
             if (data.is_capped && !state.isDeepPartition) {
                 elements.deepPartitionBanner.style.display = "flex";
             } else {
                 elements.deepPartitionBanner.style.display = "none";
             }
 
-            // Render current page
+            // Render current page & selection bar
             renderCurrentPage();
             showState(state.currentView === "cards" ? "cards" : "table");
+            elements.selectionActionsBar.style.display = "flex";
+
+            // Refresh enriched status in background
+            loadEnrichedSummary();
 
         } catch (err) {
-            if (err.name === "AbortError") {
-                return;
-            }
+            if (err.name === "AbortError") return;
             elements.executeSearchBtn.disabled = false;
             console.error("Search request failed:", err);
             showAlert("Connection Error", "Could not complete the query to the official API. Please verify your connection.");
             showState("noResults");
             elements.metricsDashboard.style.display = "none";
             elements.deepPartitionBanner.style.display = "none";
+            elements.selectionActionsBar.style.display = "none";
         }
     }
 
@@ -488,6 +653,15 @@
     function getTotalPages() {
         if (state.pageSize === "all") return 1;
         return Math.max(1, Math.ceil(state.filteredRecords.length / state.pageSize));
+    }
+
+    // Get current visible page records slice
+    function getCurrentPageSlice() {
+        const total = state.filteredRecords.length;
+        if (state.pageSize === "all") return state.filteredRecords;
+        const start = (state.currentPage - 1) * state.pageSize;
+        const end = Math.min(start + state.pageSize, total);
+        return state.filteredRecords.slice(start, end);
     }
 
     // Render the current page slice of records
@@ -529,6 +703,64 @@
         renderCards(pageSlice);
         renderTable(pageSlice);
         renderPaginationControls(totalPages);
+        updateSelectionUI();
+    }
+
+    // Toggle Select All on visible page
+    function toggleSelectAllPage(checked) {
+        const pageSlice = getCurrentPageSlice();
+        pageSlice.forEach(item => {
+            const npi = String(item.number);
+            if (checked) {
+                state.selectedNpis.add(npi);
+            } else {
+                state.selectedNpis.delete(npi);
+            }
+        });
+        updateSelectionUI();
+        renderCurrentPage();
+    }
+
+    // Update selection indicators and button states
+    function updateSelectionUI() {
+        const pageSlice = getCurrentPageSlice();
+        const pageNpis = pageSlice.map(r => String(r.number));
+        const selectedOnPage = pageNpis.filter(npi => state.selectedNpis.has(npi)).length;
+
+        // Update page checkboxes
+        const allOnPageSelected = pageNpis.length > 0 && selectedOnPage === pageNpis.length;
+        if (elements.selectAllPageCheckbox) {
+            elements.selectAllPageCheckbox.checked = allOnPageSelected;
+        }
+        if (elements.thSelectAllCheckbox) {
+            elements.thSelectAllCheckbox.checked = allOnPageSelected;
+        }
+
+        const totalSelected = state.selectedNpis.size;
+
+        if (elements.selectionStatusText) {
+            elements.selectionStatusText.innerHTML = `<strong>${selectedOnPage}</strong> of ${pageNpis.length} selected on this page (${totalSelected} total selected)`;
+        }
+
+        if (elements.barEnrichCount) {
+            elements.barEnrichCount.textContent = totalSelected;
+        }
+
+        if (elements.selectionCountBadge) {
+            elements.selectionCountBadge.textContent = totalSelected;
+            elements.selectionCountBadge.style.display = totalSelected > 0 ? "inline-block" : "none";
+        }
+
+        if (elements.enrichSelectedBtn) {
+            elements.enrichSelectedBtn.disabled = totalSelected === 0;
+            elements.enrichBtnLabel.textContent = totalSelected > 0
+                ? `Find Emails (${totalSelected})`
+                : "Find Emails";
+        }
+
+        if (elements.barEnrichBtn) {
+            elements.barEnrichBtn.disabled = totalSelected === 0;
+        }
     }
 
     // Render Cards View
@@ -539,6 +771,8 @@
             const card = document.createElement("div");
             card.className = "provider-card";
 
+            const npi = String(item.number);
+            const isSelected = state.selectedNpis.has(npi);
             const basic = item.basic || {};
             const isOrg = item.enumeration_type === "NPI-2";
             const entityType = isOrg ? "Organization" : "Individual";
@@ -575,8 +809,36 @@
             const addrCityState = practiceAddr ? `${practiceAddr.city || ''}, ${practiceAddr.state || ''} ${practiceAddr.postal_code || ''}`.trim() : "";
             const phone = practiceAddr ? (practiceAddr.telephone_number || "Not listed") : "Not listed";
 
+            // Check if provider has enriched emails
+            const enrichedEmails = state.enrichedEmailsMap[npi] || [];
+            const hasEmails = enrichedEmails.length > 0;
+            const validMxCount = enrichedEmails.filter(e => e.mx_valid === 1).length;
+
+            let emailBadgeHtml = "";
+            if (hasEmails) {
+                emailBadgeHtml = `
+                    <span class="email-badge" title="${enrichedEmails.map(e => e.email).join(', ')}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                            <polyline points="22,6 12,13 2,6"/>
+                        </svg>
+                        <span>${enrichedEmails.length} Email${enrichedEmails.length > 1 ? 's' : ''}</span>
+                        ${validMxCount > 0 ? `<span class="badge-mx-pill">MX ✓</span>` : ''}
+                    </span>
+                `;
+            }
+
             card.innerHTML = `
                 <div>
+                    <!-- Top Checkbox and Selector Row -->
+                    <div class="card-top-row">
+                        <label class="card-select-label">
+                            <input type="checkbox" class="provider-card-select" data-npi="${escapeHtml(npi)}" ${isSelected ? 'checked' : ''}>
+                            <span>Select for Email Discovery</span>
+                        </label>
+                        ${emailBadgeHtml}
+                    </div>
+
                     <div class="card-header">
                         <div class="card-title-group">
                             <h4>${escapeHtml(name)}</h4>
@@ -613,8 +875,8 @@
                 </div>
 
                 <div class="card-footer">
-                    <span class="npi-badge">NPI: ${escapeHtml(item.number)}</span>
-                    <button type="button" class="btn-card-inspect" data-npi="${escapeHtml(item.number)}">
+                    <span class="npi-badge">NPI: ${escapeHtml(npi)}</span>
+                    <button type="button" class="btn-card-inspect" data-npi="${escapeHtml(npi)}">
                         <span>View Full Record</span>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"/>
@@ -622,6 +884,17 @@
                     </button>
                 </div>
             `;
+
+            // Checkbox event
+            const checkbox = card.querySelector(".provider-card-select");
+            checkbox.addEventListener("change", (e) => {
+                if (e.target.checked) {
+                    state.selectedNpis.add(npi);
+                } else {
+                    state.selectedNpis.delete(npi);
+                }
+                updateSelectionUI();
+            });
 
             card.querySelector(".btn-card-inspect").addEventListener("click", () => {
                 openProviderModal(item);
@@ -637,6 +910,8 @@
 
         records.forEach(item => {
             const tr = document.createElement("tr");
+            const npi = String(item.number);
+            const isSelected = state.selectedNpis.has(npi);
 
             const basic = item.basic || {};
             const isOrg = item.enumeration_type === "NPI-2";
@@ -668,10 +943,29 @@
             const cityState = practiceAddr ? `${practiceAddr.city || ''}, ${practiceAddr.state || ''}` : "N/A";
             const phone = practiceAddr ? (practiceAddr.telephone_number || "—") : "—";
 
+            // Enriched email info
+            const enrichedEmails = state.enrichedEmailsMap[npi] || [];
+            let emailColumnHtml = `<span class="text-muted" style="font-size:0.8rem;">Not Enriched</span>`;
+            if (enrichedEmails.length > 0) {
+                const firstEmail = enrichedEmails[0];
+                emailColumnHtml = `
+                    <div class="table-emails-cell">
+                        <span class="email-badge" title="${enrichedEmails.map(e => e.email).join(', ')}">
+                            ${escapeHtml(firstEmail.email)}
+                            ${firstEmail.mx_valid === 1 ? '<span class="badge-mx-pill">MX ✓</span>' : ''}
+                        </span>
+                        ${enrichedEmails.length > 1 ? `<span class="badge" style="font-size:0.7rem;">+${enrichedEmails.length - 1} more</span>` : ''}
+                    </div>
+                `;
+            }
+
             tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="provider-table-select" data-npi="${escapeHtml(npi)}" ${isSelected ? 'checked' : ''}>
+                </td>
                 <td>
                     <div class="table-npi-cell">
-                        <span class="table-npi-num">${escapeHtml(item.number)}</span>
+                        <span class="table-npi-num">${escapeHtml(npi)}</span>
                         <span class="badge ${badgeClass}">${entityType}</span>
                     </div>
                 </td>
@@ -683,15 +977,27 @@
                     <div class="table-name">${escapeHtml(primaryTax || '—')}</div>
                 </td>
                 <td>${escapeHtml(cityState)}</td>
+                <td>${emailColumnHtml}</td>
                 <td>${escapeHtml(phone)}</td>
                 <td>
-                    <button type="button" class="btn-secondary" data-npi="${escapeHtml(item.number)}">
+                    <button type="button" class="btn-secondary btn-inspect" data-npi="${escapeHtml(npi)}">
                         Inspect
                     </button>
                 </td>
             `;
 
-            tr.querySelector("button").addEventListener("click", () => {
+            // Checkbox event
+            const checkbox = tr.querySelector(".provider-table-select");
+            checkbox.addEventListener("change", (e) => {
+                if (e.target.checked) {
+                    state.selectedNpis.add(npi);
+                } else {
+                    state.selectedNpis.delete(npi);
+                }
+                updateSelectionUI();
+            });
+
+            tr.querySelector(".btn-inspect").addEventListener("click", () => {
                 openProviderModal(item);
             });
 
@@ -818,7 +1124,186 @@
         fetchResults();
     }
 
-    // Open detailed Provider Inspector Modal
+    // ==========================================
+    // Email Enrichment Workflow
+    // ==========================================
+
+    function triggerEnrichmentForSelected() {
+        if (state.selectedNpis.size === 0) return;
+        const selectedRecords = state.allRecords.filter(r => state.selectedNpis.has(String(r.number)));
+        triggerEnrichmentForRecords(selectedRecords);
+    }
+
+    async function triggerEnrichmentForRecords(records) {
+        if (!records || records.length === 0) return;
+
+        // Show live modal in running state
+        elements.enrichModalBackdrop.style.display = "flex";
+        elements.enrichStatusBadge.textContent = "Running";
+        elements.enrichStatusBadge.className = "badge active";
+        elements.enrichProgressBar.style.width = "0%";
+        elements.enrichPercentText.textContent = "0% Complete";
+        elements.enrichCountsText.textContent = `0 / ${records.length} Providers Processed`;
+        elements.enrichTotalSelected.textContent = records.length;
+        elements.enrichCompletedCount.textContent = "0";
+        elements.enrichFoundEmails.textContent = "0";
+        elements.downloadEnrichedCsvBtn.style.display = "none";
+
+        try {
+            const resp = await fetch("/api/enrich", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ records: records })
+            });
+
+            const data = await resp.json();
+            if (!data.success) {
+                alert(data.error || "Failed to start enrichment job.");
+                closeEnrichModal();
+                return;
+            }
+
+            state.activeJobId = data.job_id;
+            startJobPolling(data.job_id);
+
+        } catch (err) {
+            console.error("Enrichment initiation failed:", err);
+            alert("Could not connect to enrichment service. Please check server.");
+            closeEnrichModal();
+        }
+    }
+
+    function startJobPolling(jobId) {
+        if (state.jobPollInterval) clearInterval(state.jobPollInterval);
+
+        state.jobPollInterval = setInterval(async () => {
+            try {
+                const resp = await fetch(`/api/enrich/status/${jobId}`);
+                if (!resp.ok) return;
+
+                const job = await resp.json();
+                if (!job.success) return;
+
+                const total = job.total || 0;
+                const completed = job.completed || 0;
+                const found = job.found_emails || 0;
+                const percent = job.percent || 0;
+
+                elements.enrichProgressBar.style.width = `${percent}%`;
+                elements.enrichPercentText.textContent = `${percent}% Complete`;
+                elements.enrichCountsText.textContent = `${completed} / ${total} Providers Processed`;
+                elements.enrichCompletedCount.textContent = completed;
+                elements.enrichFoundEmails.textContent = found;
+
+                if (job.status === "completed") {
+                    clearInterval(state.jobPollInterval);
+                    state.jobPollInterval = null;
+                    elements.enrichStatusBadge.textContent = "Completed";
+                    elements.enrichStatusBadge.className = "badge active";
+                    elements.downloadEnrichedCsvBtn.style.display = "inline-flex";
+
+                    // Reload email summary & refresh views
+                    await loadEnrichedSummary();
+                    renderCurrentPage();
+
+                    // If provider inspection modal is open, refresh emails tab
+                    if (state.selectedProvider) {
+                        loadProviderModalEmails(state.selectedProvider.number);
+                    }
+                }
+            } catch (err) {
+                console.debug("Job polling error:", err);
+            }
+        }, 850);
+    }
+
+    function closeEnrichModal() {
+        elements.enrichModalBackdrop.style.display = "none";
+    }
+
+    // ==========================================
+    // Provider Inspection Modal & Email Tab
+    // ==========================================
+
+    async function loadProviderModalEmails(npi) {
+        elements.modalEmailsList.innerHTML = `<p class="text-muted">Loading discovered emails...</p>`;
+        elements.modalWebsiteLinkWrapper.innerHTML = `<em>Checking records...</em>`;
+
+        try {
+            const resp = await fetch(`/api/emails/${npi}`);
+            const data = await resp.json();
+
+            if (data.success && data.emails && data.emails.length > 0) {
+                const firstRow = data.emails[0];
+                const website = firstRow.website;
+                const websiteSource = firstRow.website_source || "discovered";
+
+                if (website) {
+                    elements.modalWebsiteLinkWrapper.innerHTML = `
+                        <a href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer">
+                            <span>${escapeHtml(website)}</span>
+                            <span class="badge" style="font-size:0.7rem;">${escapeHtml(websiteSource)}</span>
+                        </a>
+                    `;
+                } else {
+                    elements.modalWebsiteLinkWrapper.innerHTML = `<span class="text-muted">No website found yet.</span>`;
+                }
+
+                elements.modalEmailsList.innerHTML = "";
+                data.emails.forEach(item => {
+                    const row = document.createElement("div");
+                    row.className = "email-row-item";
+                    const isMx = item.mx_valid === 1;
+
+                    row.innerHTML = `
+                        <div class="email-meta-group">
+                            <div class="email-address-text">${escapeHtml(item.email)}</div>
+                            <div class="email-tags-row">
+                                <span class="badge">${escapeHtml(item.email_type || 'public_contact')}</span>
+                                <span class="badge-mx-pill ${isMx ? '' : 'invalid'}">
+                                    ${isMx ? 'MX Valid (Deliverable)' : 'No MX / Unverified'}
+                                </span>
+                                ${item.source_url ? `<span class="text-muted" title="${escapeHtml(item.source_url)}">Source: ${escapeHtml(item.source_url.slice(0, 40))}...</span>` : ''}
+                            </div>
+                        </div>
+                        <button type="button" class="btn-copy copy-email-btn" data-email="${escapeHtml(item.email)}">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                            <span>Copy Email</span>
+                        </button>
+                    `;
+
+                    row.querySelector(".copy-email-btn").addEventListener("click", () => {
+                        navigator.clipboard.writeText(item.email).then(() => {
+                            const btn = row.querySelector(".copy-email-btn");
+                            btn.innerHTML = `<span>Copied!</span>`;
+                            setTimeout(() => {
+                                btn.innerHTML = `<span>Copy Email</span>`;
+                            }, 1800);
+                        });
+                    });
+
+                    elements.modalEmailsList.appendChild(row);
+                });
+            } else {
+                elements.modalWebsiteLinkWrapper.innerHTML = `<span class="text-muted">No official website identified yet.</span>`;
+                elements.modalEmailsList.innerHTML = `
+                    <div class="empty-state" style="padding: 1.5rem 0;">
+                        <p class="text-muted">No public emails discovered for this provider yet.</p>
+                        <p style="font-size: 0.85rem; color: var(--text-secondary);">
+                            Click <strong>"Run Email Discovery"</strong> above to find official clinic websites, scan contact pages, and verify email DNS/MX records.
+                        </p>
+                    </div>
+                `;
+            }
+        } catch (err) {
+            console.error("Failed to load provider emails:", err);
+            elements.modalEmailsList.innerHTML = `<p class="text-danger">Could not load email records.</p>`;
+        }
+    }
+
     function openProviderModal(item) {
         state.selectedProvider = item;
         const basic = item.basic || {};
@@ -939,6 +1424,26 @@
             });
         }
 
+        // Reset and pre-populate Multi-Stage Research inputs
+        if (elements.researchOrgInput) {
+            elements.researchOrgInput.value = isOrg ? (basic.organization_name || "") : "";
+        }
+        if (elements.researchOrgDomainInput) {
+            elements.researchOrgDomainInput.value = "";
+        }
+        if (elements.researchStatusRow) {
+            elements.researchStatusRow.style.display = "none";
+        }
+        if (elements.researchSourcesWrapper) {
+            elements.researchSourcesWrapper.style.display = "none";
+        }
+        if (elements.emailResearchSources) {
+            elements.emailResearchSources.innerHTML = "";
+        }
+
+        // Load Emails & Website Tab
+        loadProviderModalEmails(item.number);
+
         // Exact Raw JSON
         elements.modalRawJsonCode.textContent = JSON.stringify(item, null, 2);
 
@@ -948,6 +1453,179 @@
         // Show modal
         elements.providerModalBackdrop.style.display = "flex";
         document.body.style.overflow = "hidden";
+    }
+
+    // ==========================================
+    // Multi-Stage Public Research Workflow
+    // ==========================================
+
+    async function executeResearch(stage, organization = "", domains = []) {
+        const provider = state.selectedProvider;
+        if (!provider) return;
+
+        const engine = elements.researchEngineSelect ? elements.researchEngineSelect.value : "tavily";
+        const statusPill = elements.emailResearchStatus;
+        const queryBox = elements.emailResearchQuery;
+        const sourcesWrapper = elements.researchSourcesWrapper;
+        const sourcesList = elements.emailResearchSources;
+        const sourcesCount = elements.sourcesCount;
+
+        if (elements.researchStatusRow) elements.researchStatusRow.style.display = "flex";
+        if (statusPill) {
+            statusPill.textContent = "Searching public sources...";
+            statusPill.className = "research-status-pill loading";
+        }
+        if (queryBox) queryBox.textContent = "";
+        if (sourcesWrapper) sourcesWrapper.style.display = "none";
+        if (sourcesList) sourcesList.innerHTML = "";
+
+        if (elements.researchProviderEmail) elements.researchProviderEmail.disabled = true;
+        if (elements.researchOrgBtn) elements.researchOrgBtn.disabled = true;
+        if (elements.researchWebsiteBtn) elements.researchWebsiteBtn.disabled = true;
+
+        try {
+            const resp = await fetch("/api/email-research", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    record: provider,
+                    stage: stage,
+                    organization: organization,
+                    domains: domains,
+                    provider: engine,
+                })
+            });
+
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                if (statusPill) {
+                    statusPill.textContent = `Search Incomplete: ${data.error || "Search request failed"}`;
+                    statusPill.className = "research-status-pill error";
+                }
+                return;
+            }
+
+            const sources = data.sources || [];
+            if (statusPill) {
+                statusPill.textContent = sources.length > 0 ? (data.status || "Sources Found") : "Email Not Found";
+                statusPill.className = sources.length > 0 ? "research-status-pill success" : "research-status-pill";
+            }
+            if (queryBox) queryBox.textContent = `Query: ${data.query}`;
+            if (sourcesCount) sourcesCount.textContent = sources.length;
+
+            if (sources.length > 0) {
+                if (sourcesWrapper) sourcesWrapper.style.display = "block";
+                sources.forEach(src => {
+                    const li = document.createElement("li");
+                    li.className = "research-source-item";
+
+                    let domainStr = "";
+                    try {
+                        const parsed = new URL(src.url);
+                        domainStr = parsed.hostname;
+                    } catch (e) {
+                        domainStr = src.url;
+                    }
+
+                    li.innerHTML = `
+                        <div class="source-meta">
+                            <a href="${escapeHtml(src.url)}" target="_blank" rel="noopener noreferrer" class="source-title-link">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                    <polyline points="15 3 21 3 21 9"/>
+                                    <line x1="10" y1="14" x2="21" y2="3"/>
+                                </svg>
+                                <span>${escapeHtml(src.title || domainStr)}</span>
+                            </a>
+                            <div class="source-url-text">${escapeHtml(src.url)}</div>
+                            ${src.snippet ? `<div class="source-snippet-text">${escapeHtml(src.snippet)}</div>` : ''}
+                        </div>
+                        <div class="source-actions-group">
+                            <span class="badge" style="font-size:0.7rem;text-transform:uppercase;">${escapeHtml(src.engine || engine)}</span>
+                            <button type="button" class="btn-sm btn-secondary extract-btn">
+                                <span>Extract Emails</span>
+                            </button>
+                        </div>
+                    `;
+
+                    li.querySelector(".extract-btn").addEventListener("click", () => {
+                        extractEmailsFromSource(src.url, li.querySelector(".extract-btn"));
+                    });
+
+                    sourcesList.appendChild(li);
+                });
+            }
+
+        } catch (err) {
+            console.error("Research request error:", err);
+            if (statusPill) {
+                statusPill.textContent = `Search Incomplete: ${err.message}`;
+                statusPill.className = "research-status-pill error";
+            }
+        } finally {
+            if (elements.researchProviderEmail) elements.researchProviderEmail.disabled = false;
+            if (elements.researchOrgBtn) elements.researchOrgBtn.disabled = false;
+            if (elements.researchWebsiteBtn) elements.researchWebsiteBtn.disabled = false;
+        }
+    }
+
+    async function extractEmailsFromSource(url, btnElement) {
+        if (!url || !state.selectedProvider) return;
+        if (btnElement) {
+            btnElement.disabled = true;
+            btnElement.innerHTML = `<span>Scanning...</span>`;
+        }
+
+        try {
+            const resp = await fetch("/api/email-extract-source", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    url: url,
+                    record: state.selectedProvider,
+                })
+            });
+
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                alert(data.error || "Extraction failed.");
+                if (btnElement) {
+                    btnElement.disabled = false;
+                    btnElement.innerHTML = `<span>Extract Emails</span>`;
+                }
+                return;
+            }
+
+            const candidates = data.candidates || [];
+            if (candidates.length > 0) {
+                // Refresh provider emails in modal
+                await loadProviderModalEmails(state.selectedProvider.number);
+                // Refresh global summary and table/cards badges
+                await loadEnrichedSummary();
+                renderCurrentPage();
+
+                if (btnElement) {
+                    btnElement.className = "btn-sm btn-primary extract-btn";
+                    btnElement.innerHTML = `<span>${candidates.length} Found ✓</span>`;
+                }
+            } else {
+                if (btnElement) {
+                    btnElement.innerHTML = `<span>No Emails on Page</span>`;
+                    setTimeout(() => {
+                        btnElement.disabled = false;
+                        btnElement.innerHTML = `<span>Extract Emails</span>`;
+                    }, 2500);
+                }
+            }
+        } catch (err) {
+            console.error("Extraction error:", err);
+            if (btnElement) {
+                btnElement.disabled = false;
+                btnElement.innerHTML = `<span>Extract Emails</span>`;
+            }
+        }
     }
 
     function closeModal() {
@@ -1017,6 +1695,9 @@
         elements.quickFilterInput.value = "";
         elements.metricsDashboard.style.display = "none";
         elements.deepPartitionBanner.style.display = "none";
+        elements.selectionActionsBar.style.display = "none";
+        state.selectedNpis.clear();
+        updateSelectionUI();
 
         if (shouldTrigger) {
             fetchResults();
